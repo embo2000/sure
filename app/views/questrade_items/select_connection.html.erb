@@ -1,0 +1,27 @@
+<% content_for :title, t(".page_title") %>
+
+<%= render DS::Dialog.new(disable_click_outside: true) do |dialog| %>
+  <% dialog.with_header(title: t(".dialog_title")) %>
+
+  <% dialog.with_body do %>
+    <div class="space-y-4">
+      <p class="text-sm text-secondary"><%= t(".description") %></p>
+
+      <div class="space-y-2">
+        <% @questrade_items.each do |item| %>
+          <div class="flex items-center justify-between gap-3 border border-primary rounded-lg p-3">
+            <div>
+              <p class="font-medium text-primary"><%= item.name %></p>
+              <p class="text-xs text-secondary"><%= item.sync_status_summary %></p>
+            </div>
+            <%= render DS::Link.new(
+              text: t(".setup"),
+              href: setup_accounts_questrade_item_path(item, return_to: @return_to),
+              variant: "secondary"
+            ) %>
+          </div>
+        <% end %>
+      </div>
+    </div>
+  <% end %>
+<% end %>

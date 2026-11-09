@@ -41,7 +41,7 @@ class QuestradeItemsController < ApplicationController
     update_attrs = update_attrs.merge(status: :good) if update_attrs[:refresh_token].present?
 
     if @questrade_item.update(update_attrs)
-      render_provider_panel("questrade", notice: t(".success"), questrade_items: Current.family.questrade_items.ordered)
+      render_provider_panel("questrade", notice: t(".success"), questrade_items: Current.family.questrade_items.active.ordered)
     else
       render_provider_panel("questrade", alert: @questrade_item.errors.full_messages.join(", "))
     end
@@ -66,19 +66,45 @@ class QuestradeItemsController < ApplicationController
   # Collection actions for account linking flow
 
   def preload_accounts
-    # Trigger a sync to fetch accounts from the provider
-    questrade_item = Current.family.questrade_items.first
+    questrade_item = QuestradeItem.resolve_for(family: Current.family, questrade_item_id: params[:questrade_item_id])
     unless questrade_item&.credentials_configured?
-      redirect_to settings_providers_path, alert: t(".no_credentials_configured")
+      if params[:questrade_item_id].blank? && Current.family.questrade_items.credentialed.many?
+        redirect_to select_accounts_questrade_items_path(accountable_type: params[:accountable_type], return_to: params[:return_to])
+      else
+        redirect_to settings_providers_path, alert: t(".no_credentials_configured")
+      end
       return
     end
 
     questrade_item.sync_later unless questrade_item.syncing?
-    redirect_to select_accounts_questrade_items_path(accountable_type: params[:accountable_type], return_to: params[:return_to])
+    redirect_to select_accounts_questrade_items_path(
+      questrade_item_id: questrade_item.id,
+      accountable_type: params[:accountable_type],
+      return_to: params[:return_to]
+    )
   end
 
   def select_accounts
-    questrade_item = Current.family.questrade_items.first
+    if params[:questrade_item_id].present?
+      questrade_item = QuestradeItem.resolve_for(family: Current.family, questrade_item_id: params[:questrade_item_id])
+      unless questrade_item&.credentials_configured?
+        redirect_to settings_providers_path, alert: t(".no_credentials_configured")
+        return
+      end
+
+      redirect_to setup_accounts_questrade_item_path(questrade_item, return_to: safe_return_to_path)
+      return
+    end
+
+    questrade_items = Current.family.questrade_items.credentialed.ordered
+    if questrade_items.many?
+      @questrade_items = questrade_items
+      @return_to = safe_return_to_path
+      render :select_connection
+      return
+    end
+
+    questrade_item = questrade_items.first
     unless questrade_item&.credentials_configured?
       if turbo_frame_request?
         render partial: "questrade_items/setup_required", layout: false
@@ -93,38 +119,41 @@ class QuestradeItemsController < ApplicationController
   end
 
   def link_accounts
-    questrade_item = Current.family.questrade_items.first
-    unless questrade_item&.credentials_configured?
-      redirect_to settings_providers_path, alert: t(".no_api_key")
+    selected_ids = Array(params[:selected_account_ids]).reject(&:blank?)
+    if selected_ids.empty?
+      redirect_to select_accounts_questrade_items_path(questrade_item_id: params[:questrade_item_id]), alert: t(".no_accounts_selected")
       return
     end
 
-    selected_ids = params[:selected_account_ids] || []
-    if selected_ids.empty?
-      redirect_to select_accounts_questrade_items_path, alert: t(".no_accounts_selected")
-      return
+    if params[:questrade_item_id].present?
+      questrade_item = QuestradeItem.resolve_for(family: Current.family, questrade_item_id: params[:questrade_item_id])
+      unless questrade_item&.credentials_configured?
+        redirect_to settings_providers_path, alert: t(".no_api_key")
+        return
+      end
+
+      questrade_accounts = questrade_item.questrade_accounts.where(id: selected_ids)
+    else
+      unless Current.family.questrade_items.credentialed.exists?
+        redirect_to settings_providers_path, alert: t(".no_api_key")
+        return
+      end
+
+      questrade_accounts = family_questrade_accounts
+        .where(questrade_item_id: Current.family.questrade_items.credentialed.select(:id))
+        .where(id: selected_ids)
     end
 
     accountable_type = params[:accountable_type] || "Depository"
     created_count = 0
-    already_linked_count = 0
-    invalid_count = 0
+    synced_items = []
 
-    questrade_item.questrade_accounts.where(id: selected_ids).find_each do |questrade_account|
-      # Skip if already linked
-      if questrade_account.account_provider.present?
-        already_linked_count += 1
-        next
-      end
+    questrade_accounts.find_each do |questrade_account|
+      next if questrade_account.account_provider.present?
+      next if questrade_account.name.blank?
 
-      # Skip if invalid name
-      if questrade_account.name.blank?
-        invalid_count += 1
-        next
-      end
-
-      # Create Sure account and link
       link_questrade_account(questrade_account, accountable_type)
+      synced_items << questrade_account.questrade_item
       created_count += 1
     rescue => e
       DebugLogEntry.capture(
@@ -139,18 +168,20 @@ class QuestradeItemsController < ApplicationController
     end
 
     if created_count > 0
-      questrade_item.sync_later unless questrade_item.syncing?
+      synced_items.uniq.each do |item|
+        item.sync_later unless item.syncing?
+      end
       redirect_to accounts_path, notice: t(".success", count: created_count)
     else
-      redirect_to select_accounts_questrade_items_path, alert: t(".link_failed")
+      redirect_to select_accounts_questrade_items_path(questrade_item_id: params[:questrade_item_id]), alert: t(".link_failed")
     end
   end
 
   def select_existing_account
     @account = find_writable_account!(params[:account_id])
-    @questrade_item = Current.family.questrade_items.first
+    @questrade_item = QuestradeItem.resolve_for(family: Current.family, questrade_item_id: params[:questrade_item_id])
 
-    unless @questrade_item&.credentials_configured?
+    if params[:questrade_item_id].present? && @questrade_item.nil?
       if turbo_frame_request?
         render partial: "questrade_items/setup_required", layout: false
       else
@@ -159,22 +190,37 @@ class QuestradeItemsController < ApplicationController
       return
     end
 
-    @questrade_accounts = @questrade_item.questrade_accounts
-                                                      .left_joins(:account_provider)
-                                                      .where(account_providers: { id: nil })
-                                                      .order(:name)
+    unless @questrade_item&.credentials_configured? || Current.family.questrade_items.credentialed.exists?
+      if turbo_frame_request?
+        render partial: "questrade_items/setup_required", layout: false
+      else
+        redirect_to settings_providers_path, alert: t(".no_credentials_configured")
+      end
+      return
+    end
+
+    scope = family_questrade_accounts
+      .left_joins(:account_provider)
+      .where(account_providers: { id: nil })
+      .includes(:questrade_item)
+    scope = scope.where(questrade_item_id: @questrade_item.id) if @questrade_item
+    scope = scope.where(questrade_item_id: Current.family.questrade_items.credentialed.select(:id))
+    @questrade_accounts = scope.order(:name)
   end
 
   def link_existing_account
     account = find_writable_account!(params[:account_id])
-    questrade_item = Current.family.questrade_items.first
+    questrade_account = family_questrade_accounts.find(params[:questrade_account_id])
+    questrade_item = questrade_account.questrade_item
 
-    unless questrade_item&.credentials_configured?
+    if params[:questrade_item_id].present? && params[:questrade_item_id] != questrade_item.id.to_s
+      raise ActiveRecord::RecordNotFound
+    end
+
+    unless questrade_item.credentials_configured?
       redirect_to settings_providers_path, alert: t(".no_api_key")
       return
     end
-
-    questrade_account = questrade_item.questrade_accounts.find(params[:questrade_account_id])
 
     if questrade_account.account_provider.present?
       redirect_to account_path(account), alert: t(".provider_account_already_linked")
@@ -249,6 +295,10 @@ class QuestradeItemsController < ApplicationController
 
     def set_questrade_item
       @questrade_item = Current.family.questrade_items.find(params[:id])
+    end
+
+    def family_questrade_accounts
+      QuestradeAccount.joins(:questrade_item).where(questrade_items: { family_id: Current.family.id, scheduled_for_deletion: false })
     end
 
     # Mirror AccountsController's access gate: only accounts the user can reach

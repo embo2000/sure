@@ -347,7 +347,8 @@ class Settings::ProvidersController < ApplicationController
       @kraken_items = Current.family.kraken_items.active.ordered
       @coinspot_items = Current.family.coinspot_items.active.ordered
       @onchain_wallet_items = Current.family.onchain_wallet_items.active.ordered
-      @questrade_items = Current.family.questrade_items.active.ordered.select(:id)
+      # The panel lists each login's name, status and token form.
+      @questrade_items = Current.family.questrade_items.active.ordered
       @fio_items = Current.family.fio_items.active.ordered
 
       # Wallet uploads are managed on iOS. Only expose linked accounts the
