@@ -361,4 +361,122 @@ class PlaidItem::AccountsSnapshotTest < ActiveSupport::TestCase
 
     @snapshot.get_account_data("123")
   end
+
+  test "skips unbilled investments the institution does not support and keeps transactions" do
+    # A Depository link consents to investments even when the issuer, such as a
+    # Canadian bank, does not offer them. /investments/holdings/get then returns
+    # PRODUCTS_NOT_SUPPORTED. That must not fail the account snapshot.
+    @plaid_item.update!(
+      available_products: [],
+      billed_products: [ "transactions" ],
+      raw_payload: { "consented_products" => [ "transactions", "investments" ] }
+    )
+
+    @snapshot.expects(:accounts).returns([
+      OpenStruct.new(account_id: "chk", type: "depository", subtype: "checking"),
+      OpenStruct.new(account_id: "inv", type: "investment", subtype: "tfsa")
+    ]).at_least_once
+
+    @plaid_provider.expects(:get_transactions).with(@plaid_item.access_token, next_cursor: nil).returns(
+      OpenStruct.new(added: [], modified: [], removed: [], cursor: "tx_cursor")
+    ).once
+    @plaid_provider.expects(:get_item_investments).with(@plaid_item.access_token).raises(
+      Plaid::ApiError.new(code: 400, response_body: {
+        "error_type" => "ITEM_ERROR",
+        "error_code" => "PRODUCTS_NOT_SUPPORTED",
+        "error_message" => 'The following products are not supported by this institution: ["investments"]'
+      }.to_json)
+    ).once
+    @plaid_provider.expects(:get_item_liabilities).never
+
+    assert_difference -> { DebugLogEntry.where(source: "PlaidItem::AccountsSnapshot").count }, 1 do
+      checking = @snapshot.get_account_data("chk")
+      investment = @snapshot.get_account_data("inv")
+
+      assert_nil checking.investments_data
+      assert_nil investment.investments_data
+      assert_equal "tx_cursor", @snapshot.transactions_cursor
+    end
+  end
+
+  test "skips unbilled investments the user did not grant or that have no investment accounts" do
+    @plaid_item.update!(
+      available_products: [],
+      billed_products: [ "transactions" ],
+      raw_payload: { "consented_products" => [ "transactions", "investments" ] }
+    )
+
+    %w[ACCESS_NOT_GRANTED NO_INVESTMENT_ACCOUNTS].each do |error_code|
+      provider = mock
+      snapshot = PlaidItem::AccountsSnapshot.new(@plaid_item, plaid_provider: provider)
+      snapshot.expects(:accounts).returns([
+        OpenStruct.new(account_id: "inv", type: "investment", subtype: "tfsa")
+      ]).at_least_once
+      provider.expects(:get_transactions).returns(
+        OpenStruct.new(added: [], modified: [], removed: [], cursor: "tx_cursor")
+      )
+      provider.expects(:get_item_investments).raises(
+        Plaid::ApiError.new(code: 400, response_body: { "error_code" => error_code }.to_json)
+      ).once
+
+      assert_difference -> { DebugLogEntry.where(source: "PlaidItem::AccountsSnapshot").count }, 1 do
+        assert_nil snapshot.get_account_data("inv").investments_data
+      end
+    end
+  end
+
+  test "still raises login required from an unbilled investments call" do
+    @plaid_item.update!(
+      available_products: [],
+      billed_products: [ "transactions" ],
+      raw_payload: { "consented_products" => [ "transactions", "investments" ] }
+    )
+    @snapshot.expects(:accounts).returns([
+      OpenStruct.new(account_id: "inv", type: "investment")
+    ]).at_least_once
+    @plaid_provider.stubs(:get_transactions).returns(
+      OpenStruct.new(added: [], modified: [], removed: [], cursor: "tx_cursor")
+    )
+    @plaid_provider.expects(:get_item_investments).raises(
+      Plaid::ApiError.new(code: 400, response_body: { "error_code" => "ITEM_LOGIN_REQUIRED" }.to_json)
+    )
+
+    assert_raises(Plaid::ApiError) { @snapshot.get_account_data("inv") }
+  end
+
+  test "still raises unrelated unbilled investments errors" do
+    @plaid_item.update!(
+      available_products: [],
+      billed_products: [ "transactions" ],
+      raw_payload: { "consented_products" => [ "transactions", "investments" ] }
+    )
+    @snapshot.expects(:accounts).returns([
+      OpenStruct.new(account_id: "inv", type: "investment")
+    ]).at_least_once
+    @plaid_provider.stubs(:get_transactions).returns(
+      OpenStruct.new(added: [], modified: [], removed: [], cursor: "tx_cursor")
+    )
+    @plaid_provider.expects(:get_item_investments).raises(
+      Plaid::ApiError.new(code: 400, response_body: { "error_code" => "INVALID_ACCESS_TOKEN" }.to_json)
+    )
+
+    assert_raises(Plaid::ApiError) { @snapshot.get_account_data("inv") }
+  end
+
+  test "still raises unavailable-investments errors once investments was billed" do
+    @plaid_item.update!(available_products: [], billed_products: [ "investments" ])
+
+    %w[PRODUCTS_NOT_SUPPORTED ACCESS_NOT_GRANTED NO_INVESTMENT_ACCOUNTS].each do |error_code|
+      provider = mock
+      snapshot = PlaidItem::AccountsSnapshot.new(@plaid_item, plaid_provider: provider)
+      snapshot.expects(:accounts).returns([
+        OpenStruct.new(account_id: "inv", type: "investment")
+      ]).at_least_once
+      provider.expects(:get_item_investments).raises(
+        Plaid::ApiError.new(code: 400, response_body: { "error_code" => error_code }.to_json)
+      )
+
+      assert_raises(Plaid::ApiError) { snapshot.get_account_data("inv") }
+    end
+  end
 end

@@ -105,8 +105,16 @@ class PlaidItem::AccountsSnapshot
     end
 
     def investments_data
+      return @investments_data if defined?(@investments_data)
       return nil unless can_fetch_investments?
-      @investments_data ||= plaid_provider.get_item_investments(plaid_item.access_token)
+
+      @investments_data = plaid_provider.get_item_investments(plaid_item.access_token)
+    rescue Plaid::ApiError => e
+      error_code = plaid_error_code(e)
+      raise unless investments_unavailable?(error_code)
+
+      log_investments_unavailable(error_code)
+      @investments_data = nil
     end
 
     def can_fetch_liabilities?
@@ -145,6 +153,15 @@ class PlaidItem::AccountsSnapshot
         plaid_item.billed_products.map(&:to_s).exclude?("liabilities")
     end
 
+    # Investments is only an additionally consented product on bank and card
+    # links. Calling it when the institution does not offer it, or the user
+    # did not grant it, must not discard the accounts and transactions already
+    # fetched. Once investments is billed, the same errors stay fatal.
+    def investments_unavailable?(error_code)
+      %w[PRODUCTS_NOT_SUPPORTED ACCESS_NOT_GRANTED NO_INVESTMENT_ACCOUNTS].include?(error_code) &&
+        plaid_item.billed_products.map(&:to_s).exclude?("investments")
+    end
+
     def log_account_without_balance(account)
       DebugLogEntry.capture(
         category: "provider_sync",
@@ -158,6 +175,22 @@ class PlaidItem::AccountsSnapshot
           plaid_account_id: account.account_id,
           type: account.type,
           subtype: account.subtype
+        }
+      )
+    end
+
+    def log_investments_unavailable(error_code)
+      DebugLogEntry.capture(
+        category: "provider_sync",
+        level: "info",
+        message: "Plaid investments unavailable for this item",
+        source: self.class.name,
+        provider_key: "plaid",
+        family: plaid_item.family,
+        metadata: {
+          plaid_item_id: plaid_item.id,
+          institution_id: plaid_item.institution_id,
+          error_code: error_code
         }
       )
     end

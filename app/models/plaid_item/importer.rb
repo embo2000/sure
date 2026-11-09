@@ -22,6 +22,10 @@ class PlaidItem::Importer
 
       case error_body["error_code"]
       when "ITEM_LOGIN_REQUIRED"
+        # The failed import may have built account rows inside a transaction
+        # that already rolled back. Those in-memory records would fail
+        # validation and hide the login-required status.
+        plaid_item.plaid_accounts.reset
         plaid_item.update!(status: :requires_update)
       else
         raise error
