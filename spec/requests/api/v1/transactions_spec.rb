@@ -314,8 +314,13 @@ RSpec.describe 'API V1 Transactions', type: :request do
               description: { type: :string, description: 'Alternative to name field' },
               notes: { type: :string },
               currency: { type: :string, description: 'Currency code' },
-              category_id: { type: :string, format: :uuid },
+              category_id: { type: :string, format: :uuid, nullable: true, description: 'Category ID. Send null or an empty string to clear the category. Omit the field to leave it unchanged.' },
               merchant_id: { type: :string, format: :uuid },
+              kind: {
+                type: :string,
+                enum: Transaction.kinds.keys,
+                description: 'Transaction kind. funds_movement, cc_payment, loan_payment, and investment_contribution are transfer kinds. Send standard to change a transfer kind back. Changing kind marks the entry user-modified, the same way the transaction drawer does.'
+              },
               nature: { type: :string, enum: %w[income expense inflow outflow] },
               tag_ids: {
                 type: :array,

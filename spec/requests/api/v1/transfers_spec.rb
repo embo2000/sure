@@ -124,6 +124,74 @@ RSpec.describe 'API V1 Transfers', type: :request do
         run_test!
       end
     end
+
+    post 'Match two existing transactions as a transfer' do
+      tags 'Transfers'
+      security [ { apiKeyAuth: [] } ]
+      consumes 'application/json'
+      produces 'application/json'
+      description 'Pairs two existing transactions and confirms the match. Inflow and outflow follow the entry amount signs, as the transfer-match dialog does. Confirming sets each leg\'s kind from the destination account.'
+
+      parameter name: :body, in: :body, required: true, schema: {
+        type: :object,
+        properties: {
+          transfer: {
+            type: :object,
+            required: %w[inflow_transaction_id outflow_transaction_id],
+            properties: {
+              inflow_transaction_id: { type: :string, format: :uuid },
+              outflow_transaction_id: { type: :string, format: :uuid }
+            }
+          }
+        }
+      }
+
+      let(:match_outflow) do
+        checking.entries.create!(
+          date: Date.current,
+          amount: 25,
+          name: 'Unmatched outflow',
+          currency: 'USD',
+          entryable: Transaction.new
+        ).entryable
+      end
+      let(:match_inflow) do
+        savings.entries.create!(
+          date: Date.current,
+          amount: -25,
+          name: 'Unmatched inflow',
+          currency: 'USD',
+          entryable: Transaction.new
+        ).entryable
+      end
+      let(:body) do
+        { transfer: { outflow_transaction_id: match_outflow.id, inflow_transaction_id: match_inflow.id } }
+      end
+
+      response '201', 'transfer matched' do
+        schema '$ref' => '#/components/schemas/TransferDecision'
+
+        run_test!
+      end
+
+      response '403', 'insufficient scope' do
+        schema '$ref' => '#/components/schemas/ErrorResponse'
+
+        let(:'X-Api-Key') { api_key_without_read_scope.plain_key }
+
+        run_test!
+      end
+
+      response '422', 'invalid transfer pair' do
+        schema '$ref' => '#/components/schemas/ErrorResponse'
+
+        let(:body) do
+          { transfer: { outflow_transaction_id: match_outflow.id, inflow_transaction_id: match_outflow.id } }
+        end
+
+        run_test!
+      end
+    end
   end
 
   path '/api/v1/transfers/{id}' do
@@ -152,6 +220,41 @@ RSpec.describe 'API V1 Transfers', type: :request do
         schema '$ref' => '#/components/schemas/ErrorResponse'
 
         let(:'X-Api-Key') { nil }
+
+        run_test!
+      end
+
+      response '403', 'insufficient scope' do
+        schema '$ref' => '#/components/schemas/ErrorResponse'
+
+        let(:'X-Api-Key') { api_key_without_read_scope.plain_key }
+
+        run_test!
+      end
+
+      response '404', 'transfer not found' do
+        schema '$ref' => '#/components/schemas/ErrorResponse'
+
+        let(:id) { SecureRandom.uuid }
+
+        run_test!
+      end
+    end
+
+    delete 'Remove a transfer match' do
+      tags 'Transfers'
+      security [ { apiKeyAuth: [] } ]
+      produces 'application/json'
+      description 'Removes the transfer the way the UI rejects a match. Both transactions are kept. A confirmed match\'s kinds return to standard, and the pair is recorded so automatic matching does not restore it.'
+
+      let(:id) { transfer.id }
+
+      response '200', 'transfer removed' do
+        schema type: :object, properties: {
+          message: { type: :string },
+          inflow_transaction_id: { type: :string, format: :uuid },
+          outflow_transaction_id: { type: :string, format: :uuid }
+        }, required: %w[message inflow_transaction_id outflow_transaction_id]
 
         run_test!
       end
