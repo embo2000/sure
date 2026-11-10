@@ -144,9 +144,30 @@ class Api::V1::TransactionsController < Api::V1::BaseController
       return
     end
 
+    if (message = invalid_kind_message)
+      render json: {
+        error: "validation_failed",
+        message: "Transaction could not be updated",
+        errors: [ message ]
+      }, status: :unprocessable_entity
+      return
+    end
+
+    if (message = invalid_category_message)
+      render json: {
+        error: "validation_failed",
+        message: "Transaction could not be updated",
+        errors: [ message ]
+      }, status: :unprocessable_entity
+      return
+    end
+
     Entry.transaction do
       if @entry.update(entry_params_for_update)
         sync_needed = @entry.saved_changes_affect_balances?
+        # Same hook as the transaction drawer: a category the user just
+        # picked counts as recently used. A cleared category is a no-op.
+        @entry.transaction.record_category_usage!
 
         # Handle tags separately - only when explicitly provided in the request
         # This allows clearing tags with tag_ids: [] while preserving tags when not specified
@@ -158,8 +179,11 @@ class Api::V1::TransactionsController < Api::V1::BaseController
 
         @entry.sync_account_later if sync_needed
         @entry.lock_saved_attributes!
-        @entry.mark_user_modified! if user_modified_requested?
+        # Changing kind is the drawer's type switch, which always marks the
+        # entry so a later provider sync cannot put the old kind back.
+        @entry.mark_user_modified! if user_modified_requested? || kind_provided?
 
+        @entry.reload
         @transaction = @entry.transaction
         render :show
       else
@@ -305,7 +329,7 @@ class Api::V1::TransactionsController < Api::V1::BaseController
     def transaction_params
       params.require(:transaction).permit(
         :date, :amount, :name, :description, :notes, :currency,
-        :category_id, :merchant_id, :nature, :user_modified, tag_ids: []
+        :category_id, :merchant_id, :nature, :kind, :user_modified, tag_ids: []
       )
     end
 
@@ -346,17 +370,18 @@ class Api::V1::TransactionsController < Api::V1::BaseController
     end
 
     def entry_params_for_update
+      # Keep an explicit null category. compact_blank would drop it and leave
+      # the previous category in place. Omitted keys stay omitted.
+      entryable_attributes = { id: @entry.entryable_id }
+      entryable_attributes[:category_id] = resolved_category_id if category_provided?
+      entryable_attributes[:merchant_id] = transaction_params[:merchant_id] if transaction_params[:merchant_id].present?
+      entryable_attributes[:kind] = transaction_params[:kind].to_s if kind_provided?
+
       entry_params = {
         name: transaction_params[:name] || transaction_params[:description],
         date: transaction_params[:date],
         notes: transaction_params[:notes],
-        entryable_attributes: {
-          id: @entry.entryable_id,
-          category_id: transaction_params[:category_id],
-          merchant_id: transaction_params[:merchant_id]
-          # Note: tag_ids handled separately in update action to distinguish
-          # "not provided" from "explicitly set to empty"
-        }.compact_blank
+        entryable_attributes: entryable_attributes
       }
 
       # Only update amount if provided
@@ -371,6 +396,36 @@ class Api::V1::TransactionsController < Api::V1::BaseController
     # This distinguishes between "user wants to update tags" vs "user didn't specify tags".
     def tags_provided?
       params[:transaction].key?(:tag_ids)
+    end
+
+    def kind_provided?
+      params[:transaction].key?(:kind)
+    end
+
+    def category_provided?
+      params[:transaction].key?(:category_id)
+    end
+
+    def invalid_kind_message
+      return unless kind_provided?
+      return if Transaction.kinds.key?(transaction_params[:kind].to_s)
+
+      "Kind must be one of: #{Transaction.kinds.keys.join(', ')}"
+    end
+
+    def invalid_category_message
+      return unless category_provided?
+      return if params.dig(:transaction, :category_id).blank?
+      return if current_resource_owner.family.categories.exists?(id: params.dig(:transaction, :category_id))
+
+      "Category not found"
+    end
+
+    def resolved_category_id
+      category_id = params.dig(:transaction, :category_id)
+      return nil if category_id.blank?
+
+      category_id
     end
 
     def split_financial_fields_changed?

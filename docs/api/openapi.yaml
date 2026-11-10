@@ -10383,9 +10383,25 @@ paths:
                     category_id:
                       type: string
                       format: uuid
+                      nullable: true
+                      description: Category ID. Send null or an empty string to clear
+                        the category. Omit the field to leave it unchanged.
                     merchant_id:
                       type: string
                       format: uuid
+                    kind:
+                      type: string
+                      enum:
+                      - standard
+                      - funds_movement
+                      - cc_payment
+                      - loan_payment
+                      - one_time
+                      - investment_contribution
+                      description: Transaction kind. funds_movement, cc_payment, loan_payment,
+                        and investment_contribution are transfer kinds. Send standard
+                        to change a transfer kind back. Changing kind marks the entry
+                        user-modified, the same way the transaction drawer does.
                     nature:
                       type: string
                       enum:
@@ -10499,6 +10515,54 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+    post:
+      summary: Match two existing transactions as a transfer
+      tags:
+      - Transfers
+      security:
+      - apiKeyAuth: []
+      description: Pairs two existing transactions and confirms the match. Inflow
+        and outflow follow the entry amount signs, as the transfer-match dialog does.
+        Confirming sets each leg's kind from the destination account.
+      parameters: []
+      responses:
+        '201':
+          description: transfer matched
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TransferDecision"
+        '403':
+          description: insufficient scope
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        '422':
+          description: invalid transfer pair
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transfer:
+                  type: object
+                  required:
+                  - inflow_transaction_id
+                  - outflow_transaction_id
+                  properties:
+                    inflow_transaction_id:
+                      type: string
+                      format: uuid
+                    outflow_transaction_id:
+                      type: string
+                      format: uuid
+        required: true
   "/api/v1/transfers/{id}":
     parameters:
     - name: id
@@ -10526,6 +10590,47 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+        '403':
+          description: insufficient scope
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        '404':
+          description: transfer not found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Remove a transfer match
+      tags:
+      - Transfers
+      security:
+      - apiKeyAuth: []
+      description: Removes the transfer the way the UI rejects a match. Both transactions
+        are kept. A confirmed match's kinds return to standard, and the pair is recorded
+        so automatic matching does not restore it.
+      responses:
+        '200':
+          description: transfer removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  inflow_transaction_id:
+                    type: string
+                    format: uuid
+                  outflow_transaction_id:
+                    type: string
+                    format: uuid
+                required:
+                - message
+                - inflow_transaction_id
+                - outflow_transaction_id
         '403':
           description: insufficient scope
           content:

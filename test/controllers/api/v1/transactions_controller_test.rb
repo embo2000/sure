@@ -754,6 +754,124 @@ class Api::V1::TransactionsControllerTest < ActionDispatch::IntegrationTest
     assert_not @transaction.entry.reload.user_modified?
   end
 
+  test "should set a transfer kind and clear the category" do
+    category = categories(:food_and_drink)
+    entry = create_transaction(account: @account, amount: 25, name: "Card payment", category: category)
+    assert_equal "standard", entry.transaction.kind
+    assert_equal category, entry.transaction.category
+
+    put api_v1_transaction_url(entry.transaction),
+        params: { transaction: { kind: "funds_movement", category_id: nil } },
+        headers: api_headers(@api_key),
+        as: :json
+
+    assert_response :success
+    data = JSON.parse(response.body)
+    assert_equal "funds_movement", data["kind"]
+    assert_nil data["category"]
+
+    entry.reload
+    assert_equal "funds_movement", entry.transaction.kind
+    assert_nil entry.transaction.category_id
+    assert entry.user_modified?
+    assert entry.transaction.locked?(:kind)
+    assert entry.transaction.locked?(:category_id)
+  end
+
+  test "should change a transfer kind back to standard" do
+    entry = create_transaction(account: @account, amount: 25, name: "Moved", kind: "funds_movement")
+
+    put api_v1_transaction_url(entry.transaction),
+        params: { transaction: { kind: "standard" } },
+        headers: api_headers(@api_key),
+        as: :json
+
+    assert_response :success
+    assert_equal "standard", JSON.parse(response.body)["kind"]
+    assert_equal "standard", entry.transaction.reload.kind
+  end
+
+  test "should accept every transaction kind" do
+    Transaction.kinds.each_key do |kind|
+      entry = create_transaction(account: @account, amount: 12, name: kind)
+
+      put api_v1_transaction_url(entry.transaction),
+          params: { transaction: { kind: kind } },
+          headers: api_headers(@api_key),
+          as: :json
+
+      assert_response :success
+      assert_equal kind, entry.transaction.reload.kind
+    end
+  end
+
+  test "should reject an unknown transaction kind" do
+    entry = create_transaction(account: @account, amount: 25, name: "Card payment", category: categories(:food_and_drink))
+
+    put api_v1_transaction_url(entry.transaction),
+        params: { transaction: { kind: "not_a_kind", category_id: nil } },
+        headers: api_headers(@api_key),
+        as: :json
+
+    assert_response :unprocessable_entity
+    data = JSON.parse(response.body)
+    assert_equal "validation_failed", data["error"]
+    entry.reload
+    assert_equal "standard", entry.transaction.kind
+    assert_equal categories(:food_and_drink), entry.transaction.category
+  end
+
+  test "should clear the category when category_id is empty" do
+    entry = create_transaction(account: @account, amount: 18, name: "Groceries", category: categories(:food_and_drink))
+
+    put api_v1_transaction_url(entry.transaction),
+        params: { transaction: { category_id: "" } },
+        headers: api_headers(@api_key),
+        as: :json
+
+    assert_response :success
+    assert_nil JSON.parse(response.body)["category"]
+    assert_nil entry.transaction.reload.category_id
+    assert_equal "standard", entry.transaction.kind
+  end
+
+  test "should leave the category unchanged when category_id is omitted" do
+    entry = create_transaction(account: @account, amount: 18, name: "Groceries", category: categories(:food_and_drink))
+
+    put api_v1_transaction_url(entry.transaction),
+        params: { transaction: { name: "Renamed groceries" } },
+        headers: api_headers(@api_key),
+        as: :json
+
+    assert_response :success
+    assert_equal categories(:food_and_drink), entry.transaction.reload.category
+  end
+
+  test "should reject a category from another family" do
+    foreign_category = families(:empty).categories.create!(name: "Foreign", color: "#407706", lucide_icon: "tag")
+    entry = create_transaction(account: @account, amount: 18, name: "Groceries", category: categories(:food_and_drink))
+
+    put api_v1_transaction_url(entry.transaction),
+        params: { transaction: { category_id: foreign_category.id } },
+        headers: api_headers(@api_key),
+        as: :json
+
+    assert_response :unprocessable_entity
+    assert_equal categories(:food_and_drink), entry.transaction.reload.category
+  end
+
+  test "should reject a kind update with a read-only API key" do
+    entry = create_transaction(account: @account, amount: 25, name: "Card payment")
+
+    put api_v1_transaction_url(entry.transaction),
+        params: { transaction: { kind: "funds_movement", category_id: nil } },
+        headers: api_headers(@read_only_api_key),
+        as: :json
+
+    assert_response :forbidden
+    assert_equal "standard", entry.transaction.reload.kind
+  end
+
   test "should reject update with read-only API key" do
     update_params = {
       transaction: {

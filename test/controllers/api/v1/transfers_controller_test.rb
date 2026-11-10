@@ -164,6 +164,125 @@ class Api::V1::TransfersControllerTest < ActionDispatch::IntegrationTest
     assert_not_includes transfer_ids, @transfer.id
   end
 
+  test "matches two existing transactions as a confirmed transfer" do
+    outflow = create_transaction(@account, amount: 40, date: Date.current, name: "To savings")
+    inflow = create_transaction(@destination_account, amount: -40, date: Date.current, name: "From checking")
+
+    assert_difference "Transfer.count", 1 do
+      post api_v1_transfers_url,
+           params: { transfer: { outflow_transaction_id: outflow.id, inflow_transaction_id: inflow.id } },
+           headers: api_headers(read_write_key),
+           as: :json
+    end
+
+    assert_response :created
+    body = JSON.parse(response.body)
+    assert_equal "confirmed", body["status"]
+    assert_equal outflow.id, body.dig("outflow_transaction", "id")
+    assert_equal inflow.id, body.dig("inflow_transaction", "id")
+    assert_equal "funds_movement", outflow.reload.kind
+    assert_equal "funds_movement", inflow.reload.kind
+    assert_equal "funds_movement", body.dig("outflow_transaction", "kind")
+  end
+
+  test "matches a pair when the ids are given in either order" do
+    outflow = create_transaction(@account, amount: 15, date: Date.current, name: "Payment")
+    inflow = create_transaction(@destination_account, amount: -15, date: Date.current, name: "Deposit")
+
+    post api_v1_transfers_url,
+         params: { transfer: { outflow_transaction_id: inflow.id, inflow_transaction_id: outflow.id } },
+         headers: api_headers(read_write_key),
+         as: :json
+
+    assert_response :created
+    transfer = Transfer.find(JSON.parse(response.body)["id"])
+    assert_equal inflow, transfer.inflow_transaction
+    assert_equal outflow, transfer.outflow_transaction
+  end
+
+  test "rejects a transfer pair on the same account" do
+    outflow = create_transaction(@account, amount: 20, date: Date.current, name: "Out")
+    inflow = create_transaction(@account, amount: -20, date: Date.current, name: "In")
+
+    assert_no_difference "Transfer.count" do
+      post api_v1_transfers_url,
+           params: { transfer: { outflow_transaction_id: outflow.id, inflow_transaction_id: inflow.id } },
+           headers: api_headers(read_write_key),
+           as: :json
+    end
+
+    assert_response :unprocessable_entity
+    assert_equal "validation_failed", JSON.parse(response.body)["error"]
+  end
+
+  test "rejects a transfer pair whose dates are too far apart" do
+    outflow = create_transaction(@account, amount: 20, date: Date.current, name: "Out")
+    inflow = create_transaction(@destination_account, amount: -20, date: Date.current - 45.days, name: "In")
+
+    assert_no_difference "Transfer.count" do
+      post api_v1_transfers_url,
+           params: { transfer: { outflow_transaction_id: outflow.id, inflow_transaction_id: inflow.id } },
+           headers: api_headers(read_write_key),
+           as: :json
+    end
+
+    assert_response :unprocessable_entity
+  end
+
+  test "rejects a transfer pair from another family" do
+    foreign_outflow = @other_transfer.outflow_transaction
+    inflow = create_transaction(@destination_account, amount: -50, date: Date.parse("2024-01-15"), name: "Local inflow")
+
+    assert_no_difference "Transfer.count" do
+      post api_v1_transfers_url,
+           params: { transfer: { outflow_transaction_id: foreign_outflow.id, inflow_transaction_id: inflow.id } },
+           headers: api_headers(read_write_key),
+           as: :json
+    end
+
+    assert_response :not_found
+  end
+
+  test "refuses to match transactions with a read-only key" do
+    outflow = create_transaction(@account, amount: 11, date: Date.current, name: "Out")
+    inflow = create_transaction(@destination_account, amount: -11, date: Date.current, name: "In")
+
+    assert_no_difference "Transfer.count" do
+      post api_v1_transfers_url,
+           params: { transfer: { outflow_transaction_id: outflow.id, inflow_transaction_id: inflow.id } },
+           headers: api_headers(@api_key),
+           as: :json
+    end
+
+    assert_response :forbidden
+  end
+
+  test "unmatches a transfer and keeps both transactions" do
+    outflow = @transfer.outflow_transaction
+    inflow = @transfer.inflow_transaction
+
+    assert_difference -> { Transfer.count } => -1, -> { RejectedTransfer.count } => 1, -> { Transaction.count } => 0 do
+      delete api_v1_transfer_url(@transfer), headers: api_headers(read_write_key)
+    end
+
+    assert_response :success
+    assert_not Transfer.exists?(@transfer.id)
+    assert Transaction.exists?(outflow.id)
+    assert Transaction.exists?(inflow.id)
+    assert_equal "standard", outflow.reload.kind
+    assert_equal "standard", inflow.reload.kind
+    assert RejectedTransfer.exists?(inflow_transaction_id: inflow.id, outflow_transaction_id: outflow.id)
+  end
+
+  test "refuses to unmatch a transfer with a read-only key" do
+    assert_no_difference [ "Transfer.count", "RejectedTransfer.count" ] do
+      delete api_v1_transfer_url(@transfer), headers: api_headers(@api_key)
+    end
+
+    assert_response :forbidden
+    assert Transfer.exists?(@transfer.id)
+  end
+
   test "requires authentication" do
     get api_v1_transfers_url
 
@@ -203,5 +322,15 @@ class Api::V1::TransfersControllerTest < ActionDispatch::IntegrationTest
 
     def api_headers(api_key)
       { "X-Api-Key" => api_key.display_key }
+    end
+
+    def read_write_key
+      @read_write_key ||= ApiKey.create!(
+        user: @user,
+        name: "Transfer Write Key",
+        scopes: [ "read_write" ],
+        source: "mobile",
+        display_key: "test_transfer_rw_#{SecureRandom.hex(8)}"
+      )
     end
 end
