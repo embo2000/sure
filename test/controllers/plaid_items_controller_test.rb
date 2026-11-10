@@ -932,9 +932,10 @@ class PlaidItemsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # A member's connection holding the same accounts doesn't change that the user made
-  # this connection too, so their own connection decides the wording.
-  test "create says you made the connection when yours and a member's share the accounts" do
+  # The same mask on two connections cannot tell a shared account from two
+  # different logins that were given one placeholder mask. The warning says the
+  # accounts could not be checked and still offers Confirm this connection.
+  test "create does not treat a repeated mask as a connection the user already made" do
     create_plaid_item(name: "Example Bank", institution_id: "ins_example", owner: users(:family_admin),
                       accounts: [ { name: "Joint Checking", mask: "4321" } ])
     create_plaid_item(name: "Example Bank", institution_id: "ins_example", owner: users(:family_member),
@@ -944,9 +945,10 @@ class PlaidItemsControllerTest < ActionDispatch::IntegrationTest
               accounts: [ { name: "Joint Checking", mask: "4321" } ])
 
     assert_duplicate_warning do
-      assert_select "h2", text: I18n.t("plaid_items.duplicate_warning.title_all_connected")
-      assert_select "p", text: I18n.t("plaid_items.duplicate_warning.overlap.all_connected", count: 1)
+      assert_select "h2", text: I18n.t("plaid_items.duplicate_warning.title", count: 2)
+      assert_select "p", text: I18n.t("plaid_items.duplicate_warning.overlap.unknown", count: 2)
     end
+    assert_includes warning_actions, confirm_label
   end
 
   # Connections from before per-user ownership have no owner, and admins have always

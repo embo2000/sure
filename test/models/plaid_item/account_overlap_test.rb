@@ -72,6 +72,44 @@ class PlaidItem::AccountOverlapTest < ActiveSupport::TestCase
   # "Brokerage", so a different login's accounts can match a connected one on name
   # alone. That is too little to call them the same, and an all-connected verdict
   # would take away the dialog's override.
+  # WealthOne sends mask 0001 for every account. A second login with the same
+  # product names then looks identical, and an all-connected verdict would hide
+  # Confirm this connection.
+  test "the comparison is unknown when the same mask labels every account" do
+    wealthone = FakeItem.new([
+      FakeAccount.new("1 Year TFSA GIC", "0001"),
+      FakeAccount.new("Savings Account", "0001"),
+      FakeAccount.new("TFSA Savings Account", "0001")
+    ])
+    reported_accounts = [
+      reported("1 Year TFSA GIC", "0001"),
+      reported("Savings Account", "0001"),
+      reported("TFSA Savings Account", "0001")
+    ]
+
+    assert_equal :unknown, overlap_for(reported_accounts, items: [ wealthone ]).state
+  end
+
+  test "the comparison is unknown when Link reports one mask more than once" do
+    overlap = overlap_for([
+      reported("Checking", "0001"),
+      reported("Savings", " 0001 ")
+    ])
+
+    assert_equal :unknown, overlap.state
+  end
+
+  test "the comparison is unknown when an existing connection repeats a mask" do
+    wealthone = FakeItem.new([
+      FakeAccount.new("Savings Account", "0001"),
+      FakeAccount.new("TFSA Savings Account", "0001")
+    ])
+
+    overlap = overlap_for([ reported("New Checking", "4242") ], items: [ wealthone ])
+
+    assert_equal :unknown, overlap.state
+  end
+
   test "the comparison is unknown when a reported account has no mask" do
     brokerage = FakeItem.new([ FakeAccount.new("Brokerage", nil) ])
 

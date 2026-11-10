@@ -28,9 +28,14 @@ class PlaidItem::AccountOverlap
   #   override.
   # - A matching connection has no accounts on record yet because its first sync
   #   never landed, so any account Link reported might be one of its accounts.
+  # - The same mask appears more than once on the existing connections or in the
+  #   accounts Link reported. Some institutions, including WealthOne, send one
+  #   placeholder mask for every account, so name plus mask cannot tell one login
+  #   from another.
   def state
     return :unknown if link_accounts.empty? || link_accounts.any? { |account| account["mask"].blank? }
     return :unknown if plaid_items.any? { |item| item.plaid_accounts.empty? }
+    return :unknown if masks_ambiguous?
     return :all_connected if unconnected_accounts.empty?
 
     unconnected_accounts.size == link_accounts.size ? :none_connected : :some_connected
@@ -67,5 +72,24 @@ class PlaidItem::AccountOverlap
 
     def key_for(name, mask)
       [ name.to_s.strip.downcase, mask.to_s.strip ]
+    end
+
+    # A mask that labels more than one account cannot distinguish logins.
+    # Blank masks are already :unknown above; they are not counted here.
+    def masks_ambiguous?
+      repeated_mask?(link_accounts.map { |account| account["mask"] }) ||
+        repeated_mask?(plaid_items.flat_map(&:plaid_accounts).map(&:mask))
+    end
+
+    def repeated_mask?(masks)
+      counts = Hash.new(0)
+      masks.each do |mask|
+        stripped = mask.to_s.strip
+        next if stripped.blank?
+
+        counts[stripped] += 1
+        return true if counts[stripped] > 1
+      end
+      false
     end
 end
