@@ -382,6 +382,21 @@ class Transaction::SearchTest < ActiveSupport::TestCase
     assert_equal Money.new(200, "USD"), totals.income_money  # $200
   end
 
+  test "totals net an expense-category inflow against spending and leave income inflows alone" do
+    create_transaction(account: @checking_account, amount: 200, category: categories(:food_and_drink), kind: "standard")
+    create_transaction(account: @checking_account, amount: -50, category: categories(:food_and_drink), kind: "standard")
+    create_transaction(account: @checking_account, amount: -80, category: categories(:income), kind: "standard")
+    create_transaction(account: @checking_account, amount: -30, kind: "standard")
+    create_transaction(account: @checking_account, amount: -15, kind: "funds_movement")
+    create_transaction(account: @credit_card_account, amount: -25, kind: "cc_payment")
+
+    totals = Transaction::Search.new(@family).totals
+
+    assert_equal Money.new(150, "USD"), totals.expense_money
+    assert_equal Money.new(110, "USD"), totals.income_money
+    assert_equal Money.new(40, "USD"), totals.transfer_inflow_money
+  end
+
   test "totals handles multi-currency transactions with exchange rates" do
     # Create EUR transaction
     eur_entry = create_transaction(
@@ -494,7 +509,7 @@ class Transaction::SearchTest < ActiveSupport::TestCase
     key2 = search2.cache_key_base
 
     assert_equal key1, key2
-    assert_not_nil cache.read("transaction_search_totals/v3/#{key2}")
+    assert_not_nil cache.read("transaction_search_totals/v4/#{key2}")
     assert_equal result1, search2.totals
   end
 

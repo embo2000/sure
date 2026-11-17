@@ -456,6 +456,10 @@ class PagesController < ApplicationController
         inc_ct = income_subs[sub_id]
         exp_total = exp_ct&.total || 0
         inc_total = inc_ct&.total || 0
+        # A refund is already inside the parent's expense total. Drawing it
+        # again as income would put the return on the wrong side of the chart.
+        next if exp_total.to_d.negative? && inc_total.to_d <= 0
+
         net = exp_total - inc_total
         category = exp_ct&.category || inc_ct&.category
 
@@ -481,7 +485,7 @@ class PagesController < ApplicationController
 
       categories.each do |ct|
         val = ct.total.to_f.round(2)
-        next if val.zero?
+        next if val <= 0
 
         percentage = total.zero? ? 0 : (val / total * 100).round(1)
         color = ct.category.color.presence || Category::UNCATEGORIZED_COLOR
@@ -553,7 +557,7 @@ class PagesController < ApplicationController
       total = net_totals.total_net_expense
 
       categories = net_totals.net_expense_categories
-        .reject { |ct| ct.total.zero? }
+        .reject { |ct| ct.total <= 0 }
         .sort_by { |ct| -ct.total }
         .map do |ct|
           {

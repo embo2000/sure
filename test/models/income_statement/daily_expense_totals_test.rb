@@ -76,10 +76,13 @@ class IncomeStatement::DailyExpenseTotalsTest < ActiveSupport::TestCase
 
   test "splits each day's expense total by category when asked" do
     food = @family.categories.create! name: "Food"
+    income = @family.categories.create! name: "Income"
     create_transaction(account: @checking, amount: 100, date: Date.current, category: food)
     create_transaction(account: @checking, amount: 50, date: Date.current, category: food)
     create_transaction(account: @checking, amount: 25, date: Date.current)
-    create_transaction(account: @checking, amount: -500, date: Date.current, category: food) # income
+    create_transaction(account: @checking, amount: -500, date: Date.current, category: food) # refund
+    create_transaction(account: @checking, amount: -40, date: Date.current, category: income)
+    create_transaction(account: @checking, amount: -15, date: Date.current)
 
     rows = IncomeStatement::DailyExpenseTotals.new(
       @family,
@@ -88,7 +91,7 @@ class IncomeStatement::DailyExpenseTotalsTest < ActiveSupport::TestCase
       by_category: true
     ).call
 
-    assert_equal({ food.id => 150, nil => 25 }, rows.to_h { |row| [ row.category_id, row.total ] })
+    assert_equal({ food.id => -350, nil => 25 }, rows.to_h { |row| [ row.category_id, row.total ] })
     assert_equal daily_series.sum(&:total), rows.sum(&:total)
   end
 

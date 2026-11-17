@@ -448,13 +448,17 @@ class ReportsController < ApplicationController
       end
 
       # Helper to process an entry (transaction or trade)
-      process_entry = ->(category, entry, is_trade) do
-        type = entry.amount > 0 ? "expense" : "income"
+      process_entry = ->(category, entry, is_trade, kind = nil) do
+        # Trades are not refunds. A categorized inflow on an expense category
+        # reduces that category's spending instead of adding an income row.
+        refund = !is_trade && Category.refund_inflow?(amount: entry.amount, category: category, kind: kind)
+        type = (refund || entry.amount > 0) ? "expense" : "income"
         begin
           converted_amount = Money.new(entry.amount.abs, entry.currency).exchange_to(family_currency).amount
         rescue Money::ConversionError
           converted_amount = entry.amount.abs
         end
+        converted_amount = -converted_amount if refund
 
         if category.nil?
           # Uncategorized or Other Investments (for trades)
@@ -489,7 +493,7 @@ class ReportsController < ApplicationController
 
       # Process transactions
       transactions.each do |transaction|
-        process_entry.call(transaction.category, transaction.entry, false)
+        process_entry.call(transaction.category, transaction.entry, false, transaction.kind)
       end
 
       # Process trades

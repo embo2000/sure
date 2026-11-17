@@ -11,29 +11,29 @@ class IncomeStatement::SankeyTest < ActiveSupport::TestCase
     @child = @family.categories.create!(name: "Rebates", parent: @parent)
   end
 
-  test "opposite direction children are not double counted in parent totals" do
+  test "a refund on a subcategory reduces the parent's spending and is not income" do
     transaction(100, @parent)
     transaction(-30, @child)
     result = graph
-    assert_equal "100.0", result[:spending]
-    assert_equal "30.0", result[:income]
+    assert_equal "70.0", result[:spending]
+    assert_equal "0.0", result[:income]
     assert_equal "-70.0", result[:net_savings]
-    assert_equal "100.0", node(result, "expense_#{@parent.id}")[:value]
-    assert_equal "30.0", node(result, "income_#{@parent.id}")[:value]
-    assert_equal @child.filter_value, node(result, "income_sub_#{@child.id}")[:filter_value]
+    assert_equal "70.0", node(result, "expense_#{@parent.id}")[:value]
+    assert_nil node(result, "income_#{@parent.id}")
+    assert_nil node(result, "income_sub_#{@child.id}")
     assert_equal "70.0", node(result, "deficit_node")[:value]
     assert_balanced(result)
   end
 
-  test "zero net parent retains both directions and same-category refunds net once" do
+  test "same-category and subcategory refunds net once against spending" do
     transaction(150, @parent)
     transaction(-50, @parent)
     transaction(-100, @child)
     result = graph
-    assert_equal "100.0", result[:income]
-    assert_equal "100.0", result[:spending]
+    assert_equal "0.0", result[:income]
+    assert_equal "0.0", result[:spending]
     assert_equal "0.0", result[:net_savings]
-    assert_balanced(result)
+    assert_empty result[:nodes]
   end
 
   test "same direction children share parent capacity without duplicating totals" do
@@ -75,7 +75,7 @@ class IncomeStatement::SankeyTest < ActiveSupport::TestCase
     eur = @family.accounts.create!(name: "EUR", currency: "EUR", balance: 0, accountable: Depository.new)
     ExchangeRate.create!(from_currency: "EUR", to_currency: "USD", date: @month, rate: "1.2345")
     create_transaction(account: eur, currency: "EUR", amount: 10, date: @month, category: @child)
-    transaction(-100, @parent)
+    transaction(-100, @family.categories.create!(name: "Income", color: "#22c55e"))
     create_transaction(account: @account, amount: 900, date: @month, excluded: true)
     create_transaction(account: @account, amount: 800, date: @month, kind: "cc_payment")
     pending = create_transaction(account: @account, amount: 700, date: @month)
@@ -97,7 +97,7 @@ class IncomeStatement::SankeyTest < ActiveSupport::TestCase
 
   test "investment contributions get their own invested node when they are not spending" do
     @family.update!(investment_contributions_as_spending: false)
-    transaction(-1000, @family.categories.create!(name: "Salary", color: "#33FF57"))
+    transaction(-1000, @family.categories.create!(name: "Salary", color: "#33FF57", classification_unused: "income"))
     transaction(300, @parent)
     create_transaction(account: @account, amount: 500, category: nil, date: @month, kind: "investment_contribution")
     result = graph
@@ -113,7 +113,7 @@ class IncomeStatement::SankeyTest < ActiveSupport::TestCase
   end
 
   test "investment contributions stay in spending by default" do
-    transaction(-1000, @family.categories.create!(name: "Salary", color: "#33FF57"))
+    transaction(-1000, @family.categories.create!(name: "Salary", color: "#33FF57", classification_unused: "income"))
     create_transaction(account: @account, amount: 500, category: nil, date: @month, kind: "investment_contribution")
     result = graph
     assert_equal "500.0", result[:spending]

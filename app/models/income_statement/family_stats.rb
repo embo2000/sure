@@ -55,8 +55,14 @@ class IncomeStatement::FamilyStats
         )
         SELECT
           classification,
-          ABS(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total)) as median,
-          ABS(AVG(total)) as avg
+          CASE WHEN classification = 'expense'
+            THEN PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total)
+            ELSE ABS(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total))
+          END as median,
+          CASE WHEN classification = 'expense'
+            THEN AVG(total)
+            ELSE ABS(AVG(total))
+          END as avg
         FROM period_totals
         GROUP BY classification;
       SQL

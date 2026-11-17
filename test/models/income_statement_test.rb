@@ -854,24 +854,23 @@ class IncomeStatementTest < ActiveSupport::TestCase
     assert_in_delta 100.0, food_net.weight, 0.1
   end
 
-  test "net_category_totals places category on income side when refunds exceed expenses" do
+  test "net_category_totals keeps a refund surplus on the expense side" do
     Entry.joins(:account).where(accounts: { family_id: @family.id }).destroy_all
 
-    # $100 expense but $250 refund on Food => net income of 150
+    # $100 expense but $250 refund on Food => -$150 net spending, not income
     create_transaction(account: @checking_account, amount: 100, category: @food_category)
     create_transaction(account: @checking_account, amount: -250, category: @food_category)
 
     net = IncomeStatement.new(@family).net_category_totals(period: Period.last_30_days)
 
-    assert_equal 0, net.total_net_expense
-    assert_equal 150, net.total_net_income
+    assert_equal(-150, net.total_net_expense)
+    assert_equal 0, net.total_net_income
 
-    food_net = net.net_income_categories.find { |ct| ct.category.id == @food_category.id }
+    food_net = net.net_expense_categories.find { |ct| ct.category.id == @food_category.id }
     assert_not_nil food_net
-    assert_equal 150, food_net.total
+    assert_equal(-150, food_net.total)
 
-    # Should not appear on expense side
-    assert_nil net.net_expense_categories.find { |ct| ct.category.id == @food_category.id }
+    assert_nil net.net_income_categories.find { |ct| ct.category.id == @food_category.id }
   end
 
   test "empty account_ids returns no results for category stats" do

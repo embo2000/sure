@@ -362,7 +362,7 @@ class PagesControllerTest < ActionDispatch::IntegrationTest
   test "dashboard sankey shows investment contributions as invested when they are not spending" do
     @family.update!(investment_contributions_as_spending: false)
     category = @family.categories.create!(name: "Shopping", color: "#FF5733")
-    income_category = @family.categories.create!(name: "Salary", color: "#33FF57")
+    income_category = @family.categories.create!(name: "Salary", color: "#33FF57", classification_unused: "income")
     create_transaction(account: @family.accounts.first, name: "Payday", amount: -1000, category: income_category)
     create_transaction(account: @family.accounts.first, name: "Shopping trip", amount: 100, category: category)
     create_transaction(account: @family.accounts.first, name: "To ISA", amount: 400, category: nil, kind: "investment_contribution")
@@ -381,7 +381,7 @@ class PagesControllerTest < ActionDispatch::IntegrationTest
   test "dashboard sankey balances a deficit when outflows exceed income" do
     @family.update!(investment_contributions_as_spending: false)
     category = @family.categories.create!(name: "Shopping", color: "#FF5733")
-    income_category = @family.categories.create!(name: "Salary", color: "#33FF57")
+    income_category = @family.categories.create!(name: "Salary", color: "#33FF57", classification_unused: "income")
     create_transaction(account: @family.accounts.first, name: "Payday", amount: -1000, category: income_category)
     create_transaction(account: @family.accounts.first, name: "Shopping trip", amount: 700, category: category)
     create_transaction(account: @family.accounts.first, name: "To ISA", amount: 500, category: nil, kind: "investment_contribution")
@@ -409,12 +409,11 @@ class PagesControllerTest < ActionDispatch::IntegrationTest
       "invested is a share of the Cash Flow node, which outflows size when they exceed income"
   end
 
-  test "dashboard sankey nodes carry a stable filter_value, including opposite-direction subcategories" do
+  test "dashboard sankey nodes carry a stable filter_value and a subcategory refund is not income" do
     parent_category = @family.categories.create!(name: "Shopping", color: "#FF5733")
     subcategory = @family.categories.create!(name: "Rebate Program", parent: parent_category, color: "#33FF57")
 
-    # Parent nets as an expense; the subcategory nets as income (more refunded than spent),
-    # which routes it into the "opposite_subs" branch as its own standalone node.
+    # The rebate reduces Shopping. It is not drawn as income.
     create_transaction(account: @family.accounts.first, name: "Shopping trip", amount: 100, category: parent_category)
     create_transaction(account: @family.accounts.first, name: "Rebate refund", amount: -30, category: subcategory)
 
@@ -425,9 +424,8 @@ class PagesControllerTest < ActionDispatch::IntegrationTest
     sankey_data = JSON.parse(chart["data-sankey-chart-data-value"])
     nodes = sankey_data.fetch("nodes")
 
-    opposite_node = nodes.find { |node| node.fetch("id").start_with?("income_sub_") }
-    assert_not_nil opposite_node, "expected an opposite-direction subcategory node"
-    assert_equal subcategory.name, opposite_node["filter_value"]
+    assert nodes.none? { |node| node.fetch("id") == "income_sub_#{subcategory.id}" },
+      "a refund on an expense subcategory is not income"
 
     parent_node = nodes.find { |node| node.fetch("id") == "expense_#{parent_category.id}" }
     assert_equal parent_category.name, parent_node["filter_value"]
@@ -1058,7 +1056,7 @@ class PagesControllerTest < ActionDispatch::IntegrationTest
     groceries = @family.categories.create!(name: "Spending Filter Groceries", parent: food)
     rent = @family.categories.create!(name: "Spending Filter Rent")
     unused = @family.categories.create!(name: "Spending Filter Unused")
-    salary = @family.categories.create!(name: "Spending Filter Salary")
+    salary = @family.categories.create!(name: "Spending Filter Salary", classification_unused: "income")
 
     create_transaction(account: account, name: "Groceries", amount: 40, date: selected_month, category: groceries)
     create_transaction(account: account, name: "Rent before", amount: 500, date: previous_month, category: rent)
