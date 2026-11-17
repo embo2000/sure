@@ -265,10 +265,9 @@ class PlaidAccount::Liabilities::MortgageProcessorTest < ActiveSupport::TestCase
     assert_equal({ "2026-01-15" => 5.2 }, rates(loan))
   end
 
-  # PlaidItem::Importer#handle_plaid_error swallows ITEM_LOGIN_REQUIRED and
-  # the sync still processes, so the payload is the previous sync's. A rate
-  # from it is not a change the bank reported today, and dating it would
-  # route around a rate the user has since corrected and locked.
+  # A payload processed while the item needs a fresh login is the previous
+  # sync's. A rate from it is not a change the bank reported today, and
+  # dating it would route around a rate the user has since corrected and locked.
   test "a rate from an import that needed a fresh login is not dated" do
     loan = loan_with(interest_rate: 4.5, rate_type: "variable", start_date: ORIGINATED)
     loan.lock_attr!(:interest_rate)

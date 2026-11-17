@@ -61,13 +61,13 @@ module PlaidAccount::Liabilities::LoanTermWriter
     # decided by the loan: a first sighting sets the base rate, an unchanged
     # rate writes nothing, a change is a row dated `as_of`.
     #
-    # Not from an import that stopped for a fresh login: PlaidItem::Importer
-    # swallows ITEM_LOGIN_REQUIRED and marks the item, and the sync still
-    # processes, so this payload is the previous sync's. Its rate is not a
-    # change the bank reported on `as_of`, and dating it would route around a
-    # base rate the user has since corrected and locked. The status means
-    # "this import" because PlaidItem::Importer#import puts it back to good
-    # after a fetch that succeeds.
+    # Not from a payload left behind when Plaid asked for a fresh login.
+    # PlaidItem::Importer marks the item requires_update and fails that sync
+    # before processing. If processing still sees the status, this payload is
+    # the previous sync's, and dating its rate would route around a base rate
+    # the user has since corrected and locked. A successful import puts the
+    # item back to good before processing, so the status means the payload
+    # was not fetched on `as_of`.
     #
     # The guard sits after the fixed branch on purpose: a stale fixed rate is
     # the value the last sync already wrote, and a user's correction to it is

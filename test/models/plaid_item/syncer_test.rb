@@ -52,10 +52,10 @@ class PlaidItem::SyncerTest < ActiveSupport::TestCase
     @plaid_item.process_accounts(as_of: date)
   end
 
-  # The chain end to end: the importer swallows ITEM_LOGIN_REQUIRED, the
-  # processing phase still runs, and the stored liabilities payload is last
-  # sync's. Its rate must not become a change dated today.
-  test "a sync whose import needed a fresh login dates no rate change" do
+  # The import stops when Plaid asks for a fresh login. The sync is a
+  # failure, the item still needs an update, and the stored liabilities
+  # payload is last sync's, so its rate must not become a change dated today.
+  test "a sync whose import needed a fresh login fails and dates no rate change" do
     plaid_account = plaid_accounts(:one)
     plaid_account.update!(plaid_type: "loan", plaid_subtype: "mortgage",
                           raw_liabilities_payload: { mortgage: { interest_rate: { type: "variable", percentage: 5.2 } } })
@@ -67,12 +67,23 @@ class PlaidItem::SyncerTest < ActiveSupport::TestCase
     @plaid_item.stubs(:plaid_provider).returns(provider)
     @plaid_item.stubs(:schedule_account_syncs)
 
-    PlaidItem::Syncer.new(@plaid_item).perform_sync(stub_sync)
+    sync = @plaid_item.syncs.create!
+    sync.perform
 
+    sync.reload
+    assert_predicate sync, :failed?
+    assert_includes sync.error, "ITEM_LOGIN_REQUIRED"
     assert_predicate @plaid_item.reload, :requires_update?
     loan.reload
     assert_empty loan.variable_rate_schedule || {}, "a stale payload's rate was dated as a change"
     assert_equal 4.5, loan.interest_rate.to_f
+
+    connection = ProviderConnectionStatus.for_family(@plaid_item.family).find do |row|
+      row[:provider] == "plaid" && row[:id] == @plaid_item.id
+    end
+    assert_equal "failed", connection[:sync][:latest][:status]
+    assert_equal true, connection[:sync][:latest][:error][:present]
+    assert_equal "Sync failed", connection[:sync][:latest][:error][:message]
   end
 
   # Plaid can stop returning an account, closed at the bank say. Its stored

@@ -69,8 +69,9 @@ class PlaidItem::ImporterTest < ActiveSupport::TestCase
     @importer.stubs(:fetch_and_import_item_data).raises(error)
     @importer.expects(:fetch_and_import_accounts_data).never
 
-    @importer.import
+    raised = assert_raises(StandardError) { @importer.import }
 
+    assert_match "ITEM_LOGIN_REQUIRED", raised.message
     assert_predicate @plaid_item.reload, :requires_update?
   end
 
@@ -142,8 +143,9 @@ class PlaidItem::ImporterTest < ActiveSupport::TestCase
       Plaid::ApiError.new(code: 400, response_body: { "error_code" => "ITEM_LOGIN_REQUIRED" }.to_json)
     )
 
-    @importer.import
+    raised = assert_raises(PlaidItem::Importer::LoginRequired) { @importer.import }
 
+    assert_match "ITEM_LOGIN_REQUIRED", raised.message
     assert_predicate @plaid_item.reload, :requires_update?
     assert_empty @plaid_item.plaid_accounts
     assert_nil @plaid_item.next_cursor
