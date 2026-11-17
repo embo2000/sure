@@ -98,6 +98,27 @@ class Api::V1::CashFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "an expense-category inflow reduces spending and is left out of income" do
+    month = Date.new(2024, 2, 1)
+    account = @user.family.accounts.create!(name: "Own", owner: @user, currency: "USD", balance: 0, accountable: Depository.new)
+    shopping = @user.family.categories.create!(name: "Shopping #{SecureRandom.hex(4)}", color: "#3b82f6")
+    income = @user.family.categories.create!(name: "Paycheck #{SecureRandom.hex(4)}", color: "#22c55e", classification_unused: "income")
+    create_transaction(account: account, amount: 2000, date: month, category: shopping)
+    create_transaction(account: account, amount: BigDecimal("-1384.26"), date: month, category: shopping)
+    create_transaction(account: account, amount: -500, date: month, category: income)
+    create_transaction(account: account, amount: -40, date: month)
+    create_transaction(account: account, amount: -90, date: month, kind: "cc_payment")
+    create_transaction(account: account, amount: 25, date: month, kind: "loan_payment")
+
+    get "/api/v1/cash_flow", params: { month: month.iso8601 }, headers: api_headers(@auth)
+
+    assert_response :success
+    body = response.parsed_body
+    assert_equal "640.74", body["spending"]
+    assert_equal "540.0", body["income"]
+    assert_equal "640.74", body.dig("spending_comparison", "current_total")
+  end
+
   test "a browser session cannot authenticate the API" do
     sign_in @user
     get "/api/v1/cash_flow", params: { view: "sankey" }

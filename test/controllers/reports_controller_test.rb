@@ -566,7 +566,7 @@ class ReportsControllerTest < ActionDispatch::IntegrationTest
     start_date = Date.current.beginning_of_month
     end_date = Date.current.end_of_month
     expense_category = @family.categories.create!(name: "Reports Clickable Groceries", color: "#ABCDEF")
-    income_category = @family.categories.create!(name: "Reports Clickable Salary", color: "#FEDCBA")
+    income_category = @family.categories.create!(name: "Reports Clickable Salary", color: "#FEDCBA", classification_unused: "income")
     account = @family.accounts.first
 
     create_transaction(account: account, name: "Groceries", amount: 42, category: expense_category, date: Date.current)
@@ -653,6 +653,28 @@ class ReportsControllerTest < ActionDispatch::IntegrationTest
     end
     assert_match(/#{Regexp.escape(I18n.t("reports.transactions_breakdown.table.entries", count: 1))}/, other_investments_rows.first.text)
     assert_match(/\$100\.00/, other_investments_rows.first.text)
+  end
+
+  test "an expense-category inflow reduces the spending row and is not listed as income" do
+    @family.accounts.each { |account| account.entries.destroy_all }
+    account = @family.accounts.first
+    shopping = @family.categories.create!(name: "Reports Shopping #{SecureRandom.hex(4)}", color: "#3b82f6")
+    paycheck = @family.categories.create!(name: "Reports Paycheck #{SecureRandom.hex(4)}", color: "#22c55e", classification_unused: "income")
+
+    create_transaction(account: account, name: "Costco", amount: 200, date: Date.current, category: shopping)
+    create_transaction(account: account, name: "Costco return", amount: -50, date: Date.current, category: shopping)
+    create_transaction(account: account, name: "Paycheck", amount: -100, date: Date.current, category: paycheck)
+
+    get reports_path(period_type: :monthly)
+    assert_response :ok
+
+    shopping_rows = css_select("tr[data-category='category-#{shopping.id}']")
+    assert_equal 1, shopping_rows.size
+    assert_match(/\$150\.00/, shopping_rows.first.text)
+
+    paycheck_rows = css_select("tr[data-category='category-#{paycheck.id}']")
+    assert_equal 1, paycheck_rows.size
+    assert_match(/\$100\.00/, paycheck_rows.first.text)
   end
 
   test "monthly period navigation shows previous month link" do

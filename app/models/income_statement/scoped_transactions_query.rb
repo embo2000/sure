@@ -11,13 +11,29 @@
 module IncomeStatement::ScopedTransactionsQuery
   private
     # Contributions and loan payments are cash outflows whatever their
-    # sign, so they classify as expense; other negative amounts classify as
-    # income. A family that does not count investing as spending gets its
-    # contributions classified as 'investment' instead, which keeps them out
-    # of income and expense totals while still letting callers sum them.
+    # sign, so they classify as expense. An inflow on an expense category is
+    # a refund: it stays an expense so it nets against that category instead
+    # of becoming income. Other negative amounts (Income, or no category)
+    # classify as income. A family that does not count investing as spending
+    # gets its contributions classified as 'investment' instead, which keeps
+    # them out of income and expense totals while still letting callers sum them.
     def classification_sql(t)
       contribution = @family.investment_contributions_as_spending? ? "expense" : "investment"
-      "CASE WHEN #{t}.kind = 'investment_contribution' THEN '#{contribution}' WHEN #{t}.kind = 'loan_payment' THEN 'expense' WHEN ae.amount < 0 THEN 'income' ELSE 'expense' END"
+      <<~SQL.squish
+        CASE
+          WHEN #{t}.kind = 'investment_contribution' THEN '#{contribution}'
+          WHEN #{t}.kind = 'loan_payment' THEN 'expense'
+          WHEN ae.amount < 0 AND #{Category.non_income_category_sql(t)} THEN 'expense'
+          WHEN ae.amount < 0 THEN 'income'
+          ELSE 'expense'
+        END
+      SQL
+    end
+
+    # Income totals stay positive. Expense totals stay signed, so a refund
+    # reduces the category and can go below zero when refunds exceed purchases.
+    def classified_total_sql(t)
+      "CASE WHEN #{classification_sql(t)} = 'income' THEN ABS(SUM(#{converted_amount_sql(t)})) ELSE SUM(#{converted_amount_sql(t)}) END"
     end
 
     # Entry amount converted to the family currency at the day's exchange
@@ -87,7 +103,7 @@ module IncomeStatement::ScopedTransactionsQuery
     # Bind params every income statement query needs; classes merge their
     # extras (date range, interval, account ids) on top.
     def base_sql_params(extra = {})
-      { target_currency: @family.currency, family_id: @family.id }.merge(extra).tap do |params|
+      { target_currency: @family.currency, family_id: @family.id, income_category_names: Category.income_category_names }.merge(extra).tap do |params|
         ids = @family.tax_advantaged_account_ids
         params[:tax_advantaged_account_ids] = ids if ids.present?
       end

@@ -292,6 +292,9 @@ class BudgetCategory < ApplicationRecord
   # zero-budget guards below apply to that effective amount, not to the
   # allocation alone: a category funded only by rollover has money to spend.
   def percent_of_budget_spent
+    # A net refund is not "percent spent". The amount itself stays negative.
+    return 0 if actual_spending.to_d.negative?
+
     if inherits_parent_budget?
       parent = parent_budget_category
       return 0 unless parent
@@ -315,7 +318,7 @@ class BudgetCategory < ApplicationRecord
   end
 
   def bar_width_percent
-    [ percent_of_budget_spent, 100 ].min
+    [ [ percent_of_budget_spent.to_f, 0 ].max, 100 ].min
   end
 
   def over_budget?

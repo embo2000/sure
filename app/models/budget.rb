@@ -419,7 +419,9 @@ class Budget < ApplicationRecord
     key = budget_category.category_id || stable_synthetic_key(budget_category.category)
     expense = expense_totals_by_category[key]&.total || 0
     refund = income_totals_by_category[key]&.total || 0
-    [ expense - refund, 0 ].max
+    # May be negative when refunds exceed purchases. The rollover calculator
+    # still refuses to carry a negative leftover forward.
+    expense - refund
   end
 
   def category_median_monthly_expense(category)

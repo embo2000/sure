@@ -7,7 +7,7 @@ class IncomeStatement::SpendingComparisonTest < ActiveSupport::TestCase
     @family = families(:empty)
     @account = @family.accounts.create!(name: "Checking", currency: @family.currency, balance: 5000, accountable: Depository.new)
 
-    @salary = @family.categories.create!(name: "Salary")
+    @salary = @family.categories.create!(name: "Salary", classification_unused: "income")
     @food = @family.categories.create!(name: "Food")
     @groceries = @family.categories.create!(name: "Groceries", parent: @food)
     @travel = @family.categories.create!(name: "Travel")

@@ -191,7 +191,7 @@ class BudgetTest < ActiveSupport::TestCase
     )
   end
 
-  test "budget_category_actual_spending does not go below zero" do
+  test "budget_category_actual_spending is negative when refunds exceed spending" do
     family = families(:dylan_family)
     budget = Budget.find_or_bootstrap(family, start_date: Date.current.beginning_of_month)
 
@@ -220,9 +220,9 @@ class BudgetTest < ActiveSupport::TestCase
     budget = Budget.find(budget.id)
     budget.sync_budget_categories
 
-    assert_equal 0, budget.budget_category_actual_spending(
+    assert_equal(-50, budget.budget_category_actual_spending(
       budget.budget_categories.find_by(category: category)
-    )
+    ))
   end
 
   test "to_donut_segments_json only includes top-level budget categories" do
