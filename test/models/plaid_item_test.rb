@@ -156,6 +156,90 @@ class PlaidItemTest < ActiveSupport::TestCase
     end
   end
 
+  # CIBC (ins_37) and Simplii (ins_115631) answer an on-demand
+  # /transactions/refresh with a login challenge. They stay on Plaid's
+  # background updates. Other institutions still refresh.
+  test "user sync skips provider refresh for institutions configured to skip it" do
+    @plaid_item.stubs(:shared_transactions_refresh_cache?).returns(true)
+    Rails.cache.expects(:write).never
+
+    %w[ins_37 ins_115631].each do |institution_id|
+      @plaid_item.update!(institution_id: institution_id)
+
+      assert_no_enqueued_jobs only: PlaidTransactionsRefreshJob do
+        @plaid_item.request_transactions_refresh_later
+      end
+    end
+  end
+
+  test "user sync still requests provider refresh for other institutions" do
+    @plaid_item.update!(institution_id: "ins_1")
+    @plaid_item.stubs(:shared_transactions_refresh_cache?).returns(true)
+    Rails.cache.expects(:write).with(
+      "plaid_item:#{@plaid_item.id}:transactions_refresh_requested",
+      true,
+      expires_in: PlaidItem::TRANSACTIONS_REFRESH_COOLDOWN,
+      unless_exist: true
+    ).returns(true)
+
+    assert_enqueued_with(job: PlaidTransactionsRefreshJob, args: [ @plaid_item ]) do
+      @plaid_item.request_transactions_refresh_later
+    end
+  end
+
+  test "PLAID_SKIP_REFRESH_INSTITUTION_IDS chooses which institutions skip refresh" do
+    @plaid_item.stubs(:shared_transactions_refresh_cache?).returns(true)
+
+    with_env_overrides("PLAID_SKIP_REFRESH_INSTITUTION_IDS" => " ins_99 , ins_100 ") do
+      @plaid_item.update!(institution_id: "ins_37")
+      Rails.cache.expects(:write).with(
+        "plaid_item:#{@plaid_item.id}:transactions_refresh_requested",
+        true,
+        expires_in: PlaidItem::TRANSACTIONS_REFRESH_COOLDOWN,
+        unless_exist: true
+      ).returns(true)
+
+      assert_enqueued_with(job: PlaidTransactionsRefreshJob, args: [ @plaid_item ]) do
+        @plaid_item.request_transactions_refresh_later
+      end
+
+      Rails.cache.expects(:write).never
+      @plaid_item.update!(institution_id: "ins_99")
+
+      assert_no_enqueued_jobs only: PlaidTransactionsRefreshJob do
+        @plaid_item.request_transactions_refresh_later
+      end
+    end
+  end
+
+  test "an empty PLAID_SKIP_REFRESH_INSTITUTION_IDS refreshes every institution" do
+    @plaid_item.update!(institution_id: "ins_37")
+    @plaid_item.stubs(:shared_transactions_refresh_cache?).returns(true)
+
+    with_env_overrides("PLAID_SKIP_REFRESH_INSTITUTION_IDS" => "") do
+      Rails.cache.expects(:write).with(
+        "plaid_item:#{@plaid_item.id}:transactions_refresh_requested",
+        true,
+        expires_in: PlaidItem::TRANSACTIONS_REFRESH_COOLDOWN,
+        unless_exist: true
+      ).returns(true)
+
+      assert_enqueued_with(job: PlaidTransactionsRefreshJob, args: [ @plaid_item ]) do
+        @plaid_item.request_transactions_refresh_later
+      end
+    end
+  end
+
+  test "a skipped institution still schedules the normal sync" do
+    @plaid_item.update!(institution_id: "ins_37")
+    @plaid_item.stubs(:shared_transactions_refresh_cache?).returns(true)
+    @plaid_item.expects(:sync_later_with_follow_up).once
+
+    assert_no_enqueued_jobs only: PlaidTransactionsRefreshJob do
+      @plaid_item.sync_later_with_provider_refresh
+    end
+  end
+
   test "user sync does not duplicate a recent provider refresh request" do
     @plaid_item.stubs(:shared_transactions_refresh_cache?).returns(true)
     Rails.cache.stubs(:write).returns(false)

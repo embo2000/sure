@@ -13,4 +13,8 @@ Rails.application.configure do
   # Set PLAID_INCLUDE_PENDING=0 to disable if user prefers not to see pending transactions
   pending_env = ENV["PLAID_INCLUDE_PENDING"].to_s.strip.downcase
   config.x.plaid.include_pending = pending_env.blank? ? true : !falsy.include?(pending_env)
+
+  # PlaidItem skips /transactions/refresh for ids listed in
+  # PLAID_SKIP_REFRESH_INSTITUTION_IDS. The default is CIBC (ins_37) and
+  # Simplii (ins_115631). An empty value refreshes every institution.
 end

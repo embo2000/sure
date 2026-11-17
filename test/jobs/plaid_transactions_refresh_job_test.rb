@@ -19,6 +19,24 @@ class PlaidTransactionsRefreshJobTest < ActiveJob::TestCase
     end
   end
 
+  test "does not call transactions refresh for an institution configured to skip it" do
+    @plaid_item.update!(institution_id: "ins_37")
+    @provider.expects(:refresh_transactions).never
+
+    assert_no_enqueued_jobs only: PlaidTransactionsRefreshPollJob do
+      PlaidTransactionsRefreshJob.perform_now(@plaid_item)
+    end
+  end
+
+  test "still calls transactions refresh for an institution that is not skipped" do
+    @plaid_item.update!(institution_id: "ins_1")
+    @provider.expects(:refresh_transactions).with(@plaid_item.access_token)
+
+    assert_enqueued_with(job: PlaidTransactionsRefreshPollJob) do
+      PlaidTransactionsRefreshJob.perform_now(@plaid_item)
+    end
+  end
+
   test "still polls after an ambiguous refresh request failure" do
     @provider.expects(:refresh_transactions).raises(Timeout::Error)
 

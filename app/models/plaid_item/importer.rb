@@ -1,4 +1,8 @@
 class PlaidItem::Importer
+  # The item is already marked requires_update. Raising records the sync as
+  # a failure instead of a completed sync with no new data.
+  LoginRequired = Class.new(StandardError)
+
   def initialize(plaid_item, plaid_provider:)
     @plaid_item = plaid_item
     @plaid_provider = plaid_provider
@@ -27,6 +31,7 @@ class PlaidItem::Importer
         # validation and hide the login-required status.
         plaid_item.plaid_accounts.reset
         plaid_item.update!(status: :requires_update)
+        raise LoginRequired, "Plaid requires the account holder to sign in again (ITEM_LOGIN_REQUIRED)"
       else
         raise error
       end

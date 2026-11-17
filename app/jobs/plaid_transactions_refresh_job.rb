@@ -2,6 +2,8 @@ class PlaidTransactionsRefreshJob < ApplicationJob
   queue_as :high_priority
 
   def perform(plaid_item)
+    return if plaid_item.skip_transactions_refresh?
+
     cursor = plaid_item.next_cursor
 
     begin

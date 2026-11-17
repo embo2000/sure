@@ -34,6 +34,19 @@ class PlaidItem < ApplicationRecord
 
   TRANSACTIONS_REFRESH_COOLDOWN = 5.minutes
 
+  # CIBC (ins_37) and Simplii (ins_115631, on CIBC's platform) answer an
+  # on-demand /transactions/refresh with ITEM_LOGIN_REQUIRED. They stay on
+  # Plaid's background updates. Override with a comma-separated list, or set
+  # PLAID_SKIP_REFRESH_INSTITUTION_IDS to an empty value to refresh every
+  # institution.
+  DEFAULT_SKIP_REFRESH_INSTITUTION_IDS = "ins_37,ins_115631"
+
+  def self.skip_refresh_institution_ids
+    ENV.fetch("PLAID_SKIP_REFRESH_INSTITUTION_IDS", DEFAULT_SKIP_REFRESH_INSTITUTION_IDS)
+      .split(",")
+      .filter_map { |institution_id| institution_id.strip.presence }
+  end
+
   # Get accounts from both new and legacy systems
   def accounts
     @accounts ||= plaid_accounts
@@ -83,7 +96,12 @@ class PlaidItem < ApplicationRecord
     PlaidFollowUpSyncJob.set(wait: PlaidFollowUpSyncJob::RETRY_DELAY).perform_later(self, active_sync_id: active_sync.id)
   end
 
+  def skip_transactions_refresh?
+    institution_id.present? && self.class.skip_refresh_institution_ids.include?(institution_id)
+  end
+
   def request_transactions_refresh_later
+    return if skip_transactions_refresh?
     return unless supports_product?("transactions")
     return unless shared_transactions_refresh_cache?
 
