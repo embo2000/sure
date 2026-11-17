@@ -286,6 +286,65 @@ class Category < ApplicationRecord
       end.uniq
     end
 
+    # Downcased labels that count as an income category: every locale's default
+    # "Income" name, plus the historical names the classification migration
+    # marked as income. A custom paycheck category is income only when it (or
+    # its parent) carries the legacy classification, or sits under one of these.
+    def income_category_names
+      @income_category_names ||= begin
+        names = [ "income", "incomes", "other income", "other incomes" ]
+        LanguagesHelper::SUPPORTED_LOCALES.each do |locale|
+          translated = I18n.t("models.category.defaults.income", locale: locale, default: nil)
+          names << translated.to_s if translated.present?
+        end
+        names.map { |name| name.downcase }.uniq
+      end
+    end
+
+    # Categories used to be typed income or expense. The column was renamed to
+    # classification_unused and is no longer edited; a later upstream may
+    # restore `classification` or drop it. Nil when neither column exists, and
+    # income detection then uses income_category_names only.
+    def income_classification_column
+      return @income_classification_column if defined?(@income_classification_column)
+
+      names = column_names
+      @income_classification_column = if names.include?("classification_unused")
+        "classification_unused"
+      elsif names.include?("classification")
+        "classification"
+      end
+    end
+
+    # True when this category row (or its parent) is an expense category, so an
+    # inflow on it is a refund. Uncategorized transactions have no row and are
+    # not refunds. Binds :income_category_names.
+    def non_income_category_sql(transaction_table)
+      <<~SQL.squish
+        EXISTS (
+          SELECT 1
+          FROM categories refund_category
+          LEFT JOIN categories refund_parent ON refund_parent.id = refund_category.parent_id
+          WHERE refund_category.id = #{transaction_table}.category_id
+            AND NOT (#{income_category_match_sql("refund_category")})
+            AND (
+              refund_parent.id IS NULL
+              OR NOT (#{income_category_match_sql("refund_parent")})
+            )
+        )
+      SQL
+    end
+
+    # An inflow that reduces spending instead of counting as income. Transfer
+    # kinds are never refunds; they keep their existing classification.
+    def refund_inflow?(amount:, category:, kind:)
+      return false unless amount.to_d.negative?
+      return false if Transaction::TRANSFER_KINDS.include?(kind.to_s)
+      return false if category.nil?
+
+      !category.income_category?
+    end
+
     def localized_default_name_for(name)
       i18n_key = default_category_translation_key_for(name)
 
@@ -293,6 +352,14 @@ class Category < ApplicationRecord
     end
 
     private
+      def income_category_match_sql(table)
+        parts = [ "lower(#{table}.name) IN (:income_category_names)" ]
+        if (column = income_classification_column)
+          parts << "#{table}.#{column} = 'income'"
+        end
+        "(#{parts.join(" OR ")})"
+      end
+
       def default_category_translation_key_for(name)
         default_category_translation_keys_by_name[name.to_s]
       end
@@ -404,6 +471,17 @@ class Category < ApplicationRecord
 
   def display_name_with_parent
     subcategory? ? "#{parent.display_name} > #{display_name}" : display_name
+  end
+
+  # Income for refund detection: the legacy classification, the default Income
+  # name in any locale, or a subcategory of such a category. Everything else
+  # persisted is an expense category.
+  def income_category?
+    column = self.class.income_classification_column
+    return true if column && self[column] == "income"
+    return true if self.class.income_category_names.include?(name.to_s.downcase)
+
+    parent&.income_category? || false
   end
 
   # Predicate: is this the synthetic "Uncategorized" category?

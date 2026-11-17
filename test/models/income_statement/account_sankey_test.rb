@@ -8,7 +8,7 @@ class IncomeStatement::AccountSankeyTest < ActiveSupport::TestCase
     @checking = @family.accounts.create!(name: "Checking", currency: "USD", balance: 0, accountable: Depository.new)
     @card = @family.accounts.create!(name: "Card", currency: "USD", balance: 0, accountable: CreditCard.new)
     @month = Date.new(2024, 2, 1)
-    @salary = @family.categories.create!(name: "Salary", color: "#00aa00")
+    @salary = @family.categories.create!(name: "Salary", color: "#00aa00", classification_unused: "income")
     @shopping = @family.categories.create!(name: "Shopping", color: "#123456")
     @groceries = @family.categories.create!(name: "Groceries", parent: @shopping)
   end

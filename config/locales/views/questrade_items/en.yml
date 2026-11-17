@@ -17,6 +17,12 @@ en:
     errors:
       provider_not_configured: "Questrade provider is not configured"
 
+    provider_connection:
+      default_name: "Questrade"
+      default_description: "Connect to your brokerage via Questrade"
+      name: "%{name}"
+      description: "Sync accounts from %{name}"
+
     # Syncer status messages
     sync:
       status:
@@ -34,6 +40,13 @@ en:
       help_text: "Questrade API docs"
       disconnect: "Disconnect"
       disconnect_confirm: "Disconnect Questrade? This removes the connection and unlinks its synced accounts."
+      disconnect_label: "Disconnect %{name}"
+      disconnect_confirm_named: "Disconnect %{name}? This removes the connection and unlinks its synced accounts."
+      add_connection: "Add another connection"
+      connection_name_label: "Connection name"
+      connection_name_placeholder: "e.g. Jane's Questrade"
+      sync: "Sync"
+      setup_accounts: "Set up accounts"
       steps:
         s1_html: 'Sign in to the <a href="https://my.questrade.com" target="_blank" rel="noopener noreferrer" class="text-primary font-medium underline">Questrade portal</a> on a desktop browser. The API settings are not available in the mobile app.'
         s2: "Open Settings, and under General settings edit the IQ API settings."
@@ -123,6 +136,12 @@ en:
       total: "Total"
       unlinked: "Unlinked"
       update_credentials: "Update credentials"
+
+    select_connection:
+      page_title: "Choose a Questrade connection"
+      dialog_title: "Choose a Questrade connection"
+      description: "Each Questrade login is a separate connection. Set up the one whose accounts you want to add."
+      setup: "Set up"
 
     # Select accounts view
     select_accounts:

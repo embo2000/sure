@@ -207,7 +207,8 @@ class Transaction::Search
       # the old logic would keep being served (same cache_key_base) after
       # deploy, disagreeing with the (uncached) transactions_scope list
       # until entries_cache_version next changes for that family.
-      Rails.cache.fetch("transaction_search_totals/v3/#{cache_key_base}") do
+      # v4: an inflow on an expense category reduces spending instead of counting as income.
+      Rails.cache.fetch("transaction_search_totals/v4/#{cache_key_base}") do
         scope = transactions_scope
 
         # Exclude tax-advantaged accounts from totals calculation
@@ -217,12 +218,23 @@ class Transaction::Search
         result = scope
                   .select(
                     ActiveRecord::Base.sanitize_sql_array([
-                      "COALESCE(SUM(CASE WHEN entries.amount >= 0 AND transactions.kind NOT IN (?) THEN ABS(entries.amount * COALESCE(er.rate, 1)) ELSE 0 END), 0) as expense_total",
-                      Transaction::TRANSFER_KINDS
+                      <<~SQL.squish,
+                        COALESCE(SUM(CASE
+                          WHEN entries.amount >= 0 AND transactions.kind NOT IN (:transfer_kinds) THEN ABS(entries.amount * COALESCE(er.rate, 1))
+                          WHEN entries.amount < 0 AND transactions.kind NOT IN (:transfer_kinds) AND #{Category.non_income_category_sql("transactions")} THEN -ABS(entries.amount * COALESCE(er.rate, 1))
+                          ELSE 0
+                        END), 0) as expense_total
+                      SQL
+                      { transfer_kinds: Transaction::TRANSFER_KINDS, income_category_names: Category.income_category_names }
                     ]),
                     ActiveRecord::Base.sanitize_sql_array([
-                      "COALESCE(SUM(CASE WHEN entries.amount < 0 AND transactions.kind NOT IN (?) THEN ABS(entries.amount * COALESCE(er.rate, 1)) ELSE 0 END), 0) as income_total",
-                      Transaction::TRANSFER_KINDS
+                      <<~SQL.squish,
+                        COALESCE(SUM(CASE
+                          WHEN entries.amount < 0 AND transactions.kind NOT IN (:transfer_kinds) AND NOT (#{Category.non_income_category_sql("transactions")}) THEN ABS(entries.amount * COALESCE(er.rate, 1))
+                          ELSE 0
+                        END), 0) as income_total
+                      SQL
+                      { transfer_kinds: Transaction::TRANSFER_KINDS, income_category_names: Category.income_category_names }
                     ]),
                     ActiveRecord::Base.sanitize_sql_array([
                       "COALESCE(SUM(CASE WHEN entries.amount < 0 AND transactions.kind IN (?) THEN ABS(entries.amount * COALESCE(er.rate, 1)) ELSE 0 END), 0) as transfer_inflow_total",

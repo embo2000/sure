@@ -28,8 +28,10 @@
                           class: "flex items-center justify-between gap-3 border border-primary rounded-lg p-3" do |form| %>
               <%= form.hidden_field :account_id, value: @account.id %>
               <%= form.hidden_field :questrade_account_id, value: questrade_account.id %>
+              <%= form.hidden_field :questrade_item_id, value: questrade_account.questrade_item_id %>
               <div>
                 <p class="font-medium text-primary"><%= questrade_account.name %></p>
+                <p class="text-xs text-secondary"><%= questrade_account.questrade_item.name %></p>
                 <p class="text-xs text-secondary"><%= [ questrade_account.account_type, questrade_account.currency ].compact.join(" · ") %></p>
               </div>
               <%= render DS::Button.new(text: t(".buttons.link"), variant: "secondary", size: "sm", type: "submit") %>

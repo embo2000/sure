@@ -23,9 +23,23 @@ class QuestradeItem < ApplicationRecord
   has_many :accounts, through: :questrade_accounts
 
   scope :active, -> { where(scheduled_for_deletion: false) }
-  scope :syncable, -> { active.where.not(refresh_token: nil) }
+  scope :credentialed, -> { active.where.not(refresh_token: nil) }
+  scope :syncable, -> { credentialed }
   scope :ordered, -> { order(created_at: :desc) }
   scope :needs_update, -> { where(status: :requires_update) }
+
+  # A family may have several Questrade logins. An explicit id must match one
+  # of this family's credentialed connections. With no id, the only connection
+  # is used so an existing single login keeps working; several connections are
+  # not guessed.
+  def self.resolve_for(family:, questrade_item_id: nil)
+    credentialed = family.questrade_items.credentialed
+    normalized_id = questrade_item_id.to_s.strip.presence
+    return credentialed.find_by(id: normalized_id) if normalized_id
+
+    matches = credentialed.ordered
+    matches.first if matches.one?
+  end
 
   def syncer
     QuestradeItem::Syncer.new(self)
