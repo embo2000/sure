@@ -327,12 +327,14 @@ class CashFlowTest < ApplicationSystemTestCase
     visit root_path(start_date: @month.iso8601, end_date: Date.current.iso8601)
     assert_selector "#cashflow-preview svg .sankey-link"
     install_posthog_fake
-    assert_event_count "new_sankey_mismatch", 1
+    # A stored mismatch must not suppress the fresh comparison. Both charts
+    # now net the refund, so this period matches.
+    assert_event_count "new_sankey_match", 1
     page.execute_script("document.dispatchEvent(new Event('posthog:ready'))")
     find("#cashflow-preview [data-sankey-preview-target='expandButton']").click
     find("#cashflow-preview-expanded-dialog").find("button[data-action='DS--dialog#close']").click
-    assert_event_count "new_sankey_mismatch", 1
-    properties = page.evaluate_script("window.sankeyEvents.find(e => e.event === 'new_sankey_mismatch').properties")
+    assert_event_count "new_sankey_match", 1
+    properties = page.evaluate_script("window.sankeyEvents.find(e => e.event === 'new_sankey_match').properties")
     assert_equal({ "preview_version" => "cash_flow_v1" }, properties)
 
     # Retrying data within the same controller permits one new comparison.
@@ -341,7 +343,7 @@ class CashFlowTest < ApplicationSystemTestCase
       const loader = window.Stimulus.getControllerForElementAndIdentifier(preview.querySelector('[data-controller="cash-flow"]'), 'cash-flow');
       loader.load();
     JS
-    assert_event_count "new_sankey_mismatch", 2
+    assert_event_count "new_sankey_match", 2
 
     visit root_path(start_date: "1900-01-01", end_date: "1900-01-02")
     assert_selector "#cashflow-preview[data-sankey-comparison='match']"
@@ -356,21 +358,24 @@ class CashFlowTest < ApplicationSystemTestCase
     add_refunded_subcategory
     sign_in @user
     visit root_path(start_date: @month.iso8601, end_date: Date.current.iso8601)
-    assert_selector "#cashflow-preview[data-sankey-comparison='mismatch']"
+    # Both charts net the refund, so the preview agrees with the original.
+    assert_selector "#cashflow-preview[data-sankey-comparison='match']"
     positive = "#cashflow-preview button[data-sankey-preview-rating-param='positive']"
     negative = "#cashflow-preview button[data-sankey-preview-rating-param='negative']"
     background = ->(selector) { page.evaluate_script("getComputedStyle(document.querySelector(#{selector.to_json})).backgroundColor") }
-    neutral = background.call(positive)
-    assert_not_equal neutral, background.call(negative)
+    neutral = background.call(negative)
+    assert_not_equal neutral, background.call(positive)
     page.execute_script(<<~JS)
       const preview = document.querySelector('#cashflow-preview');
       const graph = JSON.parse(preview.querySelector('[data-preview-sankey-chart-data-value]').getAttribute('data-preview-sankey-chart-data-value'));
-      preview.setAttribute('data-sankey-preview-legacy-data-value', JSON.stringify(graph));
+      const legacy = JSON.parse(JSON.stringify(graph));
+      legacy.nodes[0].value += 1;
+      preview.setAttribute('data-sankey-preview-legacy-data-value', JSON.stringify(legacy));
       preview.dispatchEvent(new CustomEvent('cash-flow:state', { detail: { state: 'content', ready: true, graph } }));
     JS
-    assert_selector "#cashflow-preview[data-sankey-comparison='match']"
-    assert_not_equal neutral, background.call(positive)
-    assert_equal neutral, background.call(negative)
+    assert_selector "#cashflow-preview[data-sankey-comparison='mismatch']"
+    assert_equal neutral, background.call(positive)
+    assert_not_equal neutral, background.call(negative)
     page.execute_script(<<~JS)
       document.querySelector('#cashflow-preview').dispatchEvent(new CustomEvent('cash-flow:state', { detail: { state: 'loading', ready: false } }));
     JS
@@ -435,8 +440,8 @@ class CashFlowTest < ApplicationSystemTestCase
       end
     end
 
-    # A subcategory refunded beyond its spending nests under its parent in the
-    # new graph but links straight to Cash Flow in the original, so they differ.
+    # A subcategory refunded beyond its spending. Both charts net it into the
+    # parent, so the preview matches the original chart.
     def add_refunded_subcategory
       create_transaction(account: @account, category: @child, amount: -80, date: @month)
     end
